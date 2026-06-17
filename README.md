@@ -1,5 +1,7 @@
 # PlanBridge
 
+[![Verify](https://github.com/jbelnick/planbridge/actions/workflows/verify.yml/badge.svg)](https://github.com/jbelnick/planbridge/actions/workflows/verify.yml)
+
 **A local [Model Context Protocol](https://modelcontextprotocol.io) (MCP) connector that lets ChatGPT plan over an allowlisted local dev workspace — then hand the approved plan to Codex to build.**
 
 PlanBridge gives a hosted planner (ChatGPT / GPT‑class models) a *narrow, read‑only, inspectable* window into your real codebase so it can produce a high‑quality plan, then packages that plan into a frozen handoff and drives an isolated Codex execution. The connector is read‑only by default, fails closed without access control, and prefers subscription‑mode execution over API‑billed calls.
