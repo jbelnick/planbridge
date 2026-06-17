@@ -1,0 +1,50 @@
+{
+  "name": "planbridge",
+  "version": "0.1.0",
+  "description": "A local Model Context Protocol (MCP) connector that lets ChatGPT plan over an allowlisted local dev workspace and hand the approved plan to Codex — read-only by default, fail-closed, and subscription-first.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chatgpt",
+    "codex",
+    "ai-agents",
+    "developer-tools",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "Jason Belnick (https://www.jasonbelnick.com)",
+  "homepage": "https://github.com/jbelnick/planbridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jbelnick/planbridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jbelnick/planbridge/issues"
+  },
+  "private": true,
+  "type": "module",
+  "bin": {
+    "planbridge": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "smoke:fixtures": "vitest run tests/integration/fixture-smoke.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
