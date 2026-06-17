@@ -15,6 +15,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Install ripgrep (repo_search shells out to rg)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
