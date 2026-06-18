@@ -17,9 +17,7 @@ if [[ -z "$command" || "$command" == "-h" || "$command" == "--help" ]]; then
   exit 0
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_root="$(cd "$script_dir/../../../.." && pwd)"
-runtime_root="${PLANBRIDGE_TUNNEL_RUNTIME:-$workspace_root/shared-runtime/planbridge/tunnel-client}"
+runtime_root="${PLANBRIDGE_TUNNEL_RUNTIME:-${PLANBRIDGE_RUNTIME_DIR:-$HOME/.planbridge}/tunnel-client}"
 tunnel_client="${PLANBRIDGE_TUNNEL_CLIENT:-$runtime_root/bin/tunnel-client}"
 profile="${PLANBRIDGE_TUNNEL_PROFILE:-planbridge-local-http}"
 profile_dir="${PLANBRIDGE_TUNNEL_PROFILE_DIR:-$runtime_root/profiles}"

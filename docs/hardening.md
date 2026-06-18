@@ -30,6 +30,10 @@ For `public-url` plus network access control, PlanBridge periodically sends an u
 
 The self-probe requires two consecutive breaches before tripping. Once tripped, it latches, returns `503 E_SELF_PROBE_OPEN`, writes a metadata-only audit event, and emits a critical stderr line. It never auto-clears. Recovery is: remediate the tunnel or network secret, then RESTART PlanBridge.
 
+The default probe request aborts after 5 seconds. A timeout is treated as
+healthy for the breach classifier because the hard-alert only fires when the
+public endpoint demonstrably returns an unauthenticated MCP initialize result.
+
 ## Audit Retention
 
 Audit logs stay under `~/.planbridge`. PlanBridge rotates the audit log at 8 MiB, keeps up to 5 rotated files, prunes rotations older than 90 days, writes new log files with `0600`, and treats rotation failures as non-fatal.

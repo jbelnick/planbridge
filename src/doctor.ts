@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   assertDirectoryExists,
@@ -40,23 +40,12 @@ function connectorUrl(config: PlanbridgeConfig): string {
   return `http://127.0.0.1:${config.port}/mcp`;
 }
 
-function projectRootFromModule(): string {
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  if (path.basename(moduleDir) === "src" && path.basename(path.dirname(moduleDir)) === "dist") {
-    return path.resolve(moduleDir, "..", "..");
-  }
-  if (path.basename(moduleDir) === "src") {
-    return path.resolve(moduleDir, "..");
-  }
-  return moduleDir;
-}
-
 export function tunnelClientCommand(env: NodeJS.ProcessEnv): string {
   if (env.PLANBRIDGE_TUNNEL_CLIENT) {
     return env.PLANBRIDGE_TUNNEL_CLIENT;
   }
-  const runtimeRoot = env.PLANBRIDGE_TUNNEL_RUNTIME
-    ?? path.resolve(projectRootFromModule(), "..", "..", "..", "shared-runtime", "planbridge", "tunnel-client");
+  const runtimeBase = env.PLANBRIDGE_RUNTIME_DIR ?? path.join(env.HOME ?? os.homedir(), ".planbridge");
+  const runtimeRoot = env.PLANBRIDGE_TUNNEL_RUNTIME ?? path.join(runtimeBase, "tunnel-client");
   return path.join(runtimeRoot, "bin", "tunnel-client");
 }
 

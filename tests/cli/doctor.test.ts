@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createFixtureProject } from "../helpers/fixtures.js";
 import { runSetup } from "../../src/cli.js";
 import { runDoctor, tunnelClientCommand, type DoctorCommand } from "../../src/doctor.js";
@@ -98,12 +97,9 @@ describe("planbridge doctor", () => {
       "tunnel_0123456789abcdef0123456789abcdef"
     ], { HOME: fixture.home });
 
-    const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-    const workspaceRoot = path.resolve(projectRoot, "..", "..", "..");
     const expectedTunnelClient = path.join(
-      workspaceRoot,
-      "shared-runtime",
-      "planbridge",
+      fixture.home,
+      ".planbridge",
       "tunnel-client",
       "bin",
       "tunnel-client"

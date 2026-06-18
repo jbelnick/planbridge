@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-label="com.belnick-ai.planbridge"
+label="com.planbridge.server"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/.." && pwd)"
-workspace_root="$(cd "$project_root/../../.." && pwd)"
 domain="gui/$(id -u)"
-source_plist="$workspace_root/00-work-here/launchd/$label.plist"
 target_plist="$HOME/Library/LaunchAgents/$label.plist"
-runtime_root="$workspace_root/shared-runtime/planbridge/server"
+runtime_root="${PLANBRIDGE_RUNTIME_DIR:-$HOME/.planbridge}/server"
 
 usage() {
   cat <<USAGE
@@ -71,16 +69,42 @@ probe_service() {
   return 1
 }
 
+write_plist() {
+  local node_bin
+  node_bin="$(command -v node)" || { echo "node not found on PATH" >&2; exit 2; }
+  mkdir -p "$(dirname "$target_plist")"
+  cat > "$target_plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$node_bin</string>
+    <string>$project_root/dist/src/cli.js</string>
+    <string>serve</string>
+  </array>
+  <key>WorkingDirectory</key><string>$project_root</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$runtime_root/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>$runtime_root/launchd.err.log</string>
+</dict>
+</plist>
+PLIST
+}
+
 install_service() {
-  if [[ ! -f "$source_plist" ]]; then
-    echo "Missing source plist: $source_plist" >&2
-    exit 2
-  fi
   mkdir -p "$(dirname "$target_plist")" "$runtime_root"
   build_project
   local port
   port="$(config_port)"
-  cp "$source_plist" "$target_plist"
+  write_plist
   plutil -lint "$target_plist"
   launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
   assert_port_available "$port"

@@ -1,7 +1,7 @@
 # PlanBridge Product and Technical Spec
 
 > **Spec version:** v1.0 (2026-06-16). This document is the frozen build contract
-> for milestone M1. The grading source for the builder is the per-milestone
+> for milestone M1. The grading source for the builder is
 > a per-milestone frozen acceptance spec; this spec is the
 > contract source. Platform facts
 > in [Section 15](#15-assumptions-and-dependencies) were verified on 2026-06-16
@@ -560,7 +560,7 @@ the workflow.
 Each criterion is split into an **automatable** assertion (against a local MCP
 test client and fixtures — never a live hosted model) and, where end-to-end,
 a separate **manual smoke**. Only automatable assertions gate CI; manual smokes
-are recorded in the milestone's the milestone's build-status notes.
+are recorded in the milestone's build-status notes.
 
 ### Story 1: Set Up a Connector
 
@@ -707,8 +707,8 @@ planbridge/
 
 These security unit tests are an **M1 exit gate**, not deferred to M5.
 
-Implementation code is intentionally not created yet. This spec plus the
-per-milestone a per-milestone frozen acceptance spec is the build contract for
+Implementation code is intentionally not created yet. This spec plus
+a per-milestone frozen acceptance spec is the build contract for
 each phase.
 
 ## 12. Milestones

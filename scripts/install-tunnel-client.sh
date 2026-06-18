@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_root="$(cd "$script_dir/../../../.." && pwd)"
-runtime_root="${PLANBRIDGE_TUNNEL_RUNTIME:-$workspace_root/shared-runtime/planbridge/tunnel-client}"
+runtime_root="${PLANBRIDGE_TUNNEL_RUNTIME:-${PLANBRIDGE_RUNTIME_DIR:-$HOME/.planbridge}/tunnel-client}"
 platform="${PLANBRIDGE_TUNNEL_PLATFORM:-}"
 
 if [[ -z "$platform" ]]; then

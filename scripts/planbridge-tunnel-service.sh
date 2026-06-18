@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-label="com.belnick-ai.planbridge-tunnel"
-server_label="com.belnick-ai.planbridge"
+label="com.planbridge.tunnel"
+server_label="com.planbridge.server"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/.." && pwd)"
-workspace_root="$(cd "$project_root/../../.." && pwd)"
 domain="gui/$(id -u)"
-source_plist="$workspace_root/00-work-here/launchd/$label.plist"
 target_plist="$HOME/Library/LaunchAgents/$label.plist"
-runtime_root="${PLANBRIDGE_TUNNEL_RUNTIME:-$workspace_root/shared-runtime/planbridge/tunnel-client}"
+runtime_root="${PLANBRIDGE_TUNNEL_RUNTIME:-${PLANBRIDGE_RUNTIME_DIR:-$HOME/.planbridge}/tunnel-client}"
 tunnel_client="${PLANBRIDGE_TUNNEL_CLIENT:-$runtime_root/bin/tunnel-client}"
 profile="${PLANBRIDGE_TUNNEL_PROFILE:-planbridge-local-http}"
 profile_dir="${PLANBRIDGE_TUNNEL_PROFILE_DIR:-$runtime_root/profiles}"
@@ -138,15 +136,39 @@ stop_stale_pid() {
   rm -f "$health_file"
 }
 
+write_plist() {
+  mkdir -p "$(dirname "$target_plist")"
+  cat > "$target_plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$project_root/scripts/planbridge-tunnel-service.sh</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key><string>$project_root</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$runtime_root/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>$runtime_root/launchd.err.log</string>
+</dict>
+</plist>
+PLIST
+}
+
 install_service() {
-  if [[ ! -f "$source_plist" ]]; then
-    echo "Missing source plist: $source_plist" >&2
-    exit 2
-  fi
   start_server_service
   init_profile
   mkdir -p "$(dirname "$target_plist")" "$runtime_root"
-  cp "$source_plist" "$target_plist"
+  write_plist
   plutil -lint "$target_plist"
   launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
   stop_stale_pid

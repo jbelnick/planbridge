@@ -160,8 +160,9 @@ PlanBridge treats local workspace exposure as a real trust boundary.
 - Codex execution refuses API-key mode for the subscription-first adapter.
 - Codex work lands in an isolated worktree and is never auto-merged.
 
-The Pro consult bridge is intentionally opt-in because it uses browser state and
-subscription quota.
+The Pro consult bridge is intentionally opt-in; see
+[docs/pro-consult-threat-model.md](docs/pro-consult-threat-model.md). It uses
+browser state and subscription quota.
 
 ## Examples
 
@@ -194,6 +195,25 @@ npm test
 npm run smoke:fixtures
 npm run build
 ```
+
+## Project Files
+
+- [docs/PLANBRIDGE-SPEC.md](docs/PLANBRIDGE-SPEC.md) — product and
+  technical specification.
+- [docs/operator-guide.md](docs/operator-guide.md) — install, setup,
+  serve, doctor, tunnel, and handoff operations.
+- [docs/hardening.md](docs/hardening.md) — network/transport hardening
+  and residual-risk guide.
+- [docs/pro-consult-threat-model.md](docs/pro-consult-threat-model.md) —
+  threat model for the opt-in Pro consult bridge.
+- [src/](src/) — TypeScript MCP server, tools, adapters, CLI, and
+  security modules.
+- [tests/](tests/) — offline test suite.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and verify flow, and
+[SECURITY.md](SECURITY.md) for the security policy.
 
 ## License
 
