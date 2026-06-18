@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { DEFAULT_LIMITS, type Limits } from "./limits.js";
 import { DEFAULT_AUDIT_RETENTION, type AuditRetention } from "./security/audit-rotation.js";
 import { DEFAULT_RATE_LIMIT_POLICY, type RateLimitPolicy } from "./security/rate-limit.js";
+import { DEFAULT_PROBE_TIMEOUT_MS } from "./security/self-probe.js";
 
 const ProjectNameSchema = z
   .string()
@@ -13,11 +14,35 @@ const ProjectNameSchema = z
     message: "allowlist entries must be project directory names"
   });
 
+const TunnelIdSchema = z.string().regex(/^tunnel_[0-9a-f]{32}$/, {
+  message: "tunnel id must match tunnel_ followed by 32 lowercase hex characters"
+});
+
 export type ExecutionConfig = {
   adapter: "handoff-file" | "codex-cli";
   worktreeRoot?: string;
   timeoutMs: number;
   branchPrefix: string;
+};
+
+export type ProConsultConfig = {
+  enabled: boolean;
+  oraclePath: string;
+  chromeProfile: string;
+  cookieWait: string;
+};
+
+export type ToolProfile = "guided" | "advanced" | "legacy";
+
+export type ToolsConfig = {
+  profile: ToolProfile;
+};
+
+const DEFAULT_PRO_CONSULT: ProConsultConfig = {
+  enabled: false,
+  oraclePath: "oracle",
+  chromeProfile: "Default",
+  cookieWait: "10s"
 };
 
 const LimitsSchema = z.object({
@@ -29,7 +54,8 @@ const LimitsSchema = z.object({
   maxMatchPreviewBytes: z.number().int().positive().default(DEFAULT_LIMITS.maxMatchPreviewBytes),
   maxDiffBytes: z.number().int().positive().default(DEFAULT_LIMITS.maxDiffBytes),
   toolTimeoutMs: z.number().int().positive().default(DEFAULT_LIMITS.toolTimeoutMs),
-  codexExecTimeoutMs: z.number().int().positive().default(DEFAULT_LIMITS.codexExecTimeoutMs)
+  codexExecTimeoutMs: z.number().int().positive().default(DEFAULT_LIMITS.codexExecTimeoutMs),
+  proConsultTimeoutMs: z.number().int().positive().default(DEFAULT_LIMITS.proConsultTimeoutMs)
 });
 
 const ExecutionSchema = z
@@ -74,12 +100,38 @@ const RateLimitSchema = z.object({
 
 const SelfProbeSchema = z.object({
   intervalMs: z.number().int().positive().optional(),
-  consecutiveBreaches: z.number().int().positive().optional()
+  consecutiveBreaches: z.number().int().positive().optional(),
+  timeoutMs: z.number().int().positive().optional()
 });
+
+const ProConsultSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    oraclePath: z.string().min(1).optional(),
+    chromeProfile: z.string().min(1).optional(),
+    cookieWait: z.string().min(1).optional()
+  })
+  .optional()
+  .transform((proConsult): ProConsultConfig => ({
+    enabled: proConsult?.enabled ?? DEFAULT_PRO_CONSULT.enabled,
+    oraclePath: proConsult?.oraclePath ?? DEFAULT_PRO_CONSULT.oraclePath,
+    chromeProfile: proConsult?.chromeProfile ?? DEFAULT_PRO_CONSULT.chromeProfile,
+    cookieWait: proConsult?.cookieWait ?? DEFAULT_PRO_CONSULT.cookieWait
+  }));
+
+const ToolsSchema = z
+  .object({
+    profile: z.enum(["guided", "advanced", "legacy"]).optional()
+  })
+  .optional()
+  .transform((tools): ToolsConfig => ({
+    profile: tools?.profile ?? "legacy"
+  }));
 
 export type SelfProbeConfig = {
   intervalMs: number;
   consecutiveBreaches: number;
+  timeoutMs: number;
 };
 
 export function assertHttpsPublicUrl(urlText: string): void {
@@ -91,7 +143,7 @@ export function assertHttpsPublicUrl(urlText: string): void {
 const ConnectionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("secure-tunnel"),
-    tunnelId: z.string().min(1)
+    tunnelId: TunnelIdSchema
   }),
   z.object({
     kind: z.literal("public-url"),
@@ -117,7 +169,9 @@ export const ConfigSchema = z
     execution: ExecutionSchema,
     auditRetention: AuditRetentionSchema.optional(),
     rateLimit: RateLimitSchema.optional(),
-    selfProbe: SelfProbeSchema.optional()
+    selfProbe: SelfProbeSchema.optional(),
+    proConsult: ProConsultSchema,
+    tools: ToolsSchema
   })
   .superRefine((config, context) => {
     if (
@@ -144,6 +198,10 @@ export function configPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(planbridgeHome(env), "config.json");
 }
 
+export function setupHint(): string {
+  return "Run `planbridge setup --projects-root <path> --allowlist <name> (--tunnel-id <id> | --localhost)` before serving.";
+}
+
 export async function writeConfig(config: PlanbridgeConfig, env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const parsed = ConfigSchema.parse(config);
   const target = configPath(env);
@@ -153,7 +211,24 @@ export async function writeConfig(config: PlanbridgeConfig, env: NodeJS.ProcessE
 }
 
 export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<PlanbridgeConfig> {
-  return ConfigSchema.parse(JSON.parse(await readFile(configPath(env), "utf8")));
+  const target = configPath(env);
+  let raw: string;
+  try {
+    raw = await readFile(target, "utf8");
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === "ENOENT") {
+      throw new Error(`PlanBridge config not found at ${target}. ${setupHint()}`);
+    }
+    throw error;
+  }
+
+  try {
+    return ConfigSchema.parse(JSON.parse(raw));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`PlanBridge config is invalid at ${target}: ${detail}. Re-run setup to write a valid config.`);
+  }
 }
 
 export async function assertDirectoryExists(directory: string, label: string): Promise<void> {
@@ -180,6 +255,14 @@ export function effectiveExecution(config: PlanbridgeConfig): ExecutionConfig {
   return ConfigSchema.parse(config).execution;
 }
 
+export function effectiveProConsult(config: PlanbridgeConfig): ProConsultConfig {
+  return ConfigSchema.parse(config).proConsult;
+}
+
+export function effectiveTools(config: PlanbridgeConfig): ToolsConfig {
+  return ConfigSchema.parse(config).tools;
+}
+
 export function effectiveAuditRetention(config: PlanbridgeConfig): AuditRetention {
   const parsed = ConfigSchema.parse(config);
   return { ...DEFAULT_AUDIT_RETENTION, ...(parsed.auditRetention ?? {}) };
@@ -194,6 +277,7 @@ export function resolveSelfProbe(config: PlanbridgeConfig): SelfProbeConfig {
   const parsed = ConfigSchema.parse(config);
   return {
     intervalMs: parsed.selfProbe?.intervalMs ?? 60_000,
-    consecutiveBreaches: parsed.selfProbe?.consecutiveBreaches ?? 2
+    consecutiveBreaches: parsed.selfProbe?.consecutiveBreaches ?? 2,
+    timeoutMs: parsed.selfProbe?.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS
   };
 }

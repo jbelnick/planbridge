@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Server as HttpServer } from "node:http";
 import { AddressInfo } from "node:net";
 import path from "node:path";
-import express from "express";
+import express, { type Request } from "express";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -23,6 +23,7 @@ import { createRateLimiter } from "./security/rate-limit.js";
 import { createSelfProbe, type ProbeRequest, type SelfProbe } from "./security/self-probe.js";
 import { createPlanbridgeMcpServer } from "./tool-registry.js";
 import type { SessionState } from "./tool-context.js";
+import type { ProConsultRunner } from "./adapters/pro-consult.js";
 
 const OAUTH_RUNTIME_NOT_IMPLEMENTED =
   "OAuth runtime is not implemented in this build; use --access-control network or the Secure MCP Tunnel.";
@@ -42,6 +43,7 @@ type StartServerInput = {
   onHardAlert?: () => void | Promise<void>;
   now?: () => number;
   stderr?: Pick<NodeJS.WriteStream, "write">;
+  proConsultRunner?: ProConsultRunner;
 };
 
 function listen(app: ReturnType<typeof createMcpExpressApp>, port: number, host: "127.0.0.1"): Promise<HttpServer> {
@@ -49,6 +51,22 @@ function listen(app: ReturnType<typeof createMcpExpressApp>, port: number, host:
     const server = app.listen(port, host, () => resolve(server));
     server.on("error", reject);
   });
+}
+
+function firstForwardedValue(value: string | undefined): string | undefined {
+  return value?.split(",")[0]?.trim() || undefined;
+}
+
+function metadataBaseUrl(req: Request, config: PlanbridgeConfig): string {
+  if (config.connection.kind === "public-url") {
+    return config.connection.publicBaseUrl.replace(/\/$/, "");
+  }
+  const forwardedProto = firstForwardedValue(req.get("x-forwarded-proto"));
+  const forwardedHost = firstForwardedValue(req.get("x-forwarded-host"));
+  if (forwardedProto && forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "");
+  }
+  return `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
 }
 
 export async function startPlanbridgeServer(input: StartServerInput = {}): Promise<RunningPlanbridgeServer> {
@@ -83,6 +101,7 @@ export async function startPlanbridgeServer(input: StartServerInput = {}): Promi
       audit,
       intervalMs: probeConfig.intervalMs,
       consecutiveBreaches: probeConfig.consecutiveBreaches,
+      timeoutMs: probeConfig.timeoutMs,
       probeRequest: input.probeRequest,
       onHardAlert: input.onHardAlert,
       close: closeServer,
@@ -94,13 +113,21 @@ export async function startPlanbridgeServer(input: StartServerInput = {}): Promi
       createNetworkAuthMiddleware({
         secretHash: config.auth.accessControl.secretHash,
         limiter: createRateLimiter(resolveRateLimit(config), input.now),
-        audit,
-        now: input.now
+        audit
       })
     );
   }
 
   app.use(express.json({ limit: "1mb" }));
+
+  // tunnel-client readiness probes require discovery metadata even when runtime OAuth remains disabled.
+  app.get(["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"], (req, res) => {
+    const baseUrl = metadataBaseUrl(req, config);
+    res.json({
+      resource: connectorUrl(baseUrl),
+      resource_name: "PlanBridge"
+    });
+  });
 
   app.post("/mcp", async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
@@ -126,7 +153,7 @@ export async function startPlanbridgeServer(input: StartServerInput = {}): Promi
             transports.delete(closedSessionId);
           }
         };
-        await createPlanbridgeMcpServer({ config, home, session }).connect(transport);
+        await createPlanbridgeMcpServer({ config, home, session, proConsultRunner: input.proConsultRunner }).connect(transport);
       }
 
       if (!transport) {

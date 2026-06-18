@@ -189,12 +189,41 @@ describe("network hardening integration", () => {
         allowlist: ["alpha"],
         port: 0,
         transport: "streamable-http",
-        connection: { kind: "secure-tunnel", tunnelId: "tnl_123" },
+        connection: { kind: "secure-tunnel", tunnelId: "tunnel_0123456789abcdef0123456789abcdef" },
         auth: { mode: "none" }
       },
       probeRequest
     });
     expect(running.selfProbe).toBeUndefined();
     expect(probeRequest).not.toHaveBeenCalled();
+  });
+
+  it("serves no-auth tunnel-client discovery metadata without enabling OAuth runtime auth", async () => {
+    const fixture = await createFixtureProject("alpha");
+    running = await startPlanbridgeServer({
+      home: fixture.home,
+      config: {
+        schemaVersion: "1.0",
+        projectsRoot: fixture.projectsRoot,
+        allowlist: ["alpha"],
+        port: 0,
+        transport: "streamable-http",
+        connection: { kind: "secure-tunnel", tunnelId: "tunnel_0123456789abcdef0123456789abcdef" },
+        auth: { mode: "none" }
+      }
+    });
+
+    const protectedResource = await fetch(`${running.url}/.well-known/oauth-protected-resource/mcp`);
+    await expect(protectedResource.json()).resolves.toEqual({
+      resource: `${running.url}/mcp`,
+      resource_name: "PlanBridge"
+    });
+
+    const authorizationServer = await fetch(`${running.url}/.well-known/oauth-authorization-server`);
+    expect(authorizationServer.status).toBe(404);
+    const authorize = await fetch(`${running.url}/authorize`);
+    expect(authorize.status).toBe(404);
+    const token = await fetch(`${running.url}/token`, { method: "POST" });
+    expect(token.status).toBe(404);
   });
 });

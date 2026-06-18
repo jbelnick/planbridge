@@ -32,11 +32,45 @@ function parseRgLine(projectRoot: string, line: string): { path: string; line: n
   if (!match) {
     return null;
   }
+  const matchPath = match[1];
   return {
-    path: path.relative(projectRoot, match[1]),
+    path: path.isAbsolute(matchPath) ? path.relative(projectRoot, matchPath) : matchPath,
     line: Number.parseInt(match[2], 10),
     preview: match[3]
   };
+}
+
+async function rgOutput(args: string[], context: ToolContext, cwd?: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("rg", args, {
+      cwd,
+      maxBuffer: 1024 * 1024,
+      timeout: context.limits.toolTimeoutMs
+    });
+    return stdout;
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException & { stdout?: string; code?: number };
+    if (nodeError.code !== 1) {
+      throw error;
+    }
+    return nodeError.stdout ?? "";
+  }
+}
+
+async function searchableFiles(projectRoot: string, glob: string | undefined, context: ToolContext): Promise<string[]> {
+  const args = ["--files", "--color", "never"];
+  if (glob) {
+    args.push("--glob", glob);
+  }
+  const listed = await rgOutput(args, context, projectRoot);
+  const files: string[] = [];
+  for (const relativePath of listed.split(/\r?\n/).filter(Boolean)) {
+    const blocked = classifyBlockedPath(relativePath);
+    if (!blocked.blocked && !(await isGitIgnored(projectRoot, relativePath))) {
+      files.push(relativePath);
+    }
+  }
+  return files;
 }
 
 export async function repoSearch(
@@ -52,22 +86,11 @@ export async function repoSearch(
 
   try {
     const project = await resolveAllowedProject(context.config, input.project, planbridgeHome({ HOME: context.home }));
-    const args = ["--fixed-strings", "--line-number", "--no-heading", "--color", "never"];
-    if (input.glob) {
-      args.push("--glob", input.glob);
-    }
-    args.push("--", input.query, project.root);
-
-    let stdout = "";
-    try {
-      ({ stdout } = await execFileAsync("rg", args, { maxBuffer: 1024 * 1024, timeout: context.limits.toolTimeoutMs }));
-    } catch (error) {
-      const nodeError = error as NodeJS.ErrnoException & { stdout?: string; code?: number };
-      if (nodeError.code !== 1) {
-        throw error;
-      }
-      stdout = nodeError.stdout ?? "";
-    }
+    const candidates = await searchableFiles(project.root, input.glob, context);
+    const stdout =
+      candidates.length === 0
+        ? ""
+        : await rgOutput(["--fixed-strings", "--line-number", "--no-heading", "--color", "never", "--", input.query, ...candidates], context, project.root);
 
     const matches: Array<{ path: string; line: number; preview: string }> = [];
     const lines = stdout.split(/\r?\n/).filter(Boolean);
@@ -75,18 +98,6 @@ export async function repoSearch(
     for (const line of lines) {
       const parsed = parseRgLine(project.root, line);
       if (!parsed) {
-        continue;
-      }
-      const blocked = classifyBlockedPath(parsed.path);
-      if (blocked.blocked || (await isGitIgnored(project.root, parsed.path))) {
-        await context.audit.append({
-          event: "blocked",
-          tool: "repo_search",
-          project: project.name,
-          path: parsed.path,
-          blockReason: blocked.blocked ? blocked.reason : "E_GITIGNORED",
-          sessionId: context.session.id
-        });
         continue;
       }
       if (matches.length >= maxResults) {

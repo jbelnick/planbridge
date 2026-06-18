@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "projectsRoot": "/Users/example/code",
+  "allowlist": ["example-api", "example-web"],
+  "port": 7676,
+  "transport": "streamable-http",
+  "connection": {
+    "kind": "localhost"
+  },
+  "auth": {
+    "mode": "none"
+  },
+  "execution": {
+    "adapter": "handoff-file",
+    "timeoutMs": 1800000,
+    "branchPrefix": "planbridge/"
+  },
+  "tools": {
+    "profile": "guided"
+  },
+  "proConsult": {
+    "enabled": false,
+    "oraclePath": "oracle",
+    "chromeProfile": "Default",
+    "cookieWait": "10s"
+  }
+}

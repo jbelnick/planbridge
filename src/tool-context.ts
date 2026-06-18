@@ -3,6 +3,7 @@ import path from "node:path";
 import type { PlanbridgeConfig } from "./config.js";
 import { ConfigSchema, effectiveAuditRetention, effectiveLimits } from "./config.js";
 import type { CodexRunner } from "./adapters/codex-cli.js";
+import type { ProConsultRunner } from "./adapters/pro-consult.js";
 import type { Limits } from "./limits.js";
 import { createAuditLogger, type AuditLogger } from "./security/audit-log.js";
 
@@ -18,6 +19,7 @@ export type ToolContext = {
   audit: AuditLogger;
   session: SessionState;
   codexRunner?: CodexRunner;
+  proConsultRunner?: ProConsultRunner;
 };
 
 export function createToolContext(input: {
@@ -25,6 +27,7 @@ export function createToolContext(input: {
   home?: string;
   session?: Partial<SessionState>;
   codexRunner?: CodexRunner;
+  proConsultRunner?: ProConsultRunner;
 }): ToolContext {
   const config = ConfigSchema.parse(input.config);
   const home = input.home ?? process.env.HOME ?? os.homedir();
@@ -37,6 +40,7 @@ export function createToolContext(input: {
       id: input.session?.id ?? "local-test-session",
       filesRead: input.session?.filesRead ?? 0
     },
-    codexRunner: input.codexRunner
+    codexRunner: input.codexRunner,
+    proConsultRunner: input.proConsultRunner
   };
 }

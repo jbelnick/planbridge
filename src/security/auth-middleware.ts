@@ -7,7 +7,6 @@ export type NetworkAuthMiddlewareInput = {
   secretHash?: string;
   limiter: RateLimiter;
   audit: AuditLogger;
-  now?: () => number;
 };
 
 function bearerSecret(header: string | string[] | undefined): string | undefined {

@@ -278,9 +278,17 @@ describe("context_pack", () => {
       "E_NOT_A_REPO",
       "E_WORKTREE_FAILED",
       "E_API_KEY_MODE",
+      "E_PROJECT_REQUIRED",
+      "E_APPROVAL_REQUIRED",
+      "E_PLAN_HASH_MISMATCH",
+      "E_STALE_PLAN",
+      "E_PLAN_ALREADY_EXECUTED",
       "E_AUTH_FAILED",
       "E_AUTH_RATE_LIMITED",
-      "E_SELF_PROBE_OPEN"
+      "E_SELF_PROBE_OPEN",
+      "E_PRO_CONSULT_DISABLED",
+      "E_PRO_CONSULT_BUSY",
+      "E_PRO_CONSULT_FAILED"
     ]);
   });
 

@@ -13,7 +13,8 @@ describe("limits", () => {
       maxMatchPreviewBytes: 4 * 1024,
       maxDiffBytes: 256 * 1024,
       toolTimeoutMs: 15000,
-      codexExecTimeoutMs: 1_800_000
+      codexExecTimeoutMs: 1_800_000,
+      proConsultTimeoutMs: 600_000
     });
   });
 

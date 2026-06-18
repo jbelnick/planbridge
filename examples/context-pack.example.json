@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "project": "example-api",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "generated_at": "2026-06-17T23:47:00.000Z",
+  "prompt": "Review the authentication middleware and propose a focused hardening plan.",
+  "constraints": [
+    "Keep changes scoped to middleware and tests.",
+    "Do not introduce a new auth provider."
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "2bb80d537b1da3e38bd30361aa855686bde0ba2cb4e231a8f6b3c5f2f7f8e9aa",
+      "bytes": 1280,
+      "truncated": false,
+      "content": "# Example API\n\nRedacted example content.\n"
+    },
+    {
+      "path": "src/auth/middleware.ts",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+      "bytes": 2430,
+      "truncated": false,
+      "content": "export function authMiddleware() {\n  return '[PLANBRIDGE_REDACTED]';\n}\n"
+    }
+  ],
+  "budget": {
+    "used_bytes": 3710,
+    "max_bytes": 524288
+  },
+  "redactions": [
+    {
+      "path": "src/auth/middleware.ts",
+      "reason": "content-scan"
+    }
+  ],
+  "omitted": [
+    {
+      "path": ".env",
+      "reason": "E_SECRET_BLOCKED"
+    }
+  ]
+}

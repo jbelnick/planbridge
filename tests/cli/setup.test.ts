@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createFixtureProject } from "../helpers/fixtures.js";
 import { ConfigSchema } from "../../src/config.js";
-import { runSetup } from "../../src/cli.js";
+import { runServe, runSetup } from "../../src/cli.js";
 
 const OAUTH_NOT_IMPLEMENTED = "OAuth runtime is not implemented in this build; use --access-control network or the Secure MCP Tunnel.";
 
@@ -23,14 +23,96 @@ describe("planbridge setup", () => {
       "--allowlist",
       "alpha",
       "--tunnel-id",
-      "tnl_123"
+      "tunnel_0123456789abcdef0123456789abcdef"
     ], { HOME: fixture.home });
 
     const config = await readConfig(fixture.home);
     expect(config.projectsRoot).toBe(fixture.projectsRoot);
     expect(config.allowlist).toEqual(["alpha"]);
-    expect(config.connection).toEqual({ kind: "secure-tunnel", tunnelId: "tnl_123" });
-    expect(result.stdout).toContain("Tunnel ID: tnl_123");
+    expect(config.connection).toEqual({ kind: "secure-tunnel", tunnelId: "tunnel_0123456789abcdef0123456789abcdef" });
+    expect(config.execution.adapter).toBe("handoff-file");
+    expect(result.stdout).toContain("Tunnel ID: tunnel_0123456789abcdef0123456789abcdef");
+    expect(result.stdout).toContain("Execution adapter: handoff-file");
+  });
+
+  it("rejects malformed Secure MCP Tunnel ids", async () => {
+    const fixture = await createFixtureProject("alpha");
+
+    await expect(
+      runSetup([
+        "setup",
+        "--projects-root",
+        fixture.projectsRoot,
+        "--allowlist",
+        "alpha",
+        "--tunnel-id",
+        "tnl_123"
+      ], { HOME: fixture.home })
+    ).rejects.toThrow("tunnel id must match");
+  });
+
+  it("can wire setup directly to the codex-cli execution adapter", async () => {
+    const fixture = await createFixtureProject("alpha");
+    const worktreeRoot = path.join(fixture.home, "planbridge-worktrees");
+
+    const result = await runSetup([
+      "setup",
+      "--projects-root",
+      fixture.projectsRoot,
+      "--allowlist",
+      "alpha",
+      "--tunnel-id",
+      "tunnel_0123456789abcdef0123456789abcdef",
+      "--execution-adapter",
+      "codex-cli",
+      "--worktree-root",
+      worktreeRoot,
+      "--codex-timeout-ms",
+      "120000",
+      "--branch-prefix",
+      "pb/"
+    ], { HOME: fixture.home });
+
+    await expect(readConfig(fixture.home)).resolves.toMatchObject({
+      execution: {
+        adapter: "codex-cli",
+        worktreeRoot,
+        timeoutMs: 120000,
+        branchPrefix: "pb/"
+      }
+    });
+    expect(result.stdout).toContain("Execution adapter: codex-cli");
+    expect(result.stdout).toContain("refuses API-key mode");
+  });
+
+  it("can explicitly enable the browser-subscription Pro consult bridge", async () => {
+    const fixture = await createFixtureProject("alpha");
+
+    const result = await runSetup([
+      "setup",
+      "--projects-root",
+      fixture.projectsRoot,
+      "--allowlist",
+      "alpha",
+      "--localhost",
+      "--enable-pro-consult",
+      "--pro-consult-oracle-path",
+      "/usr/local/bin/oracle",
+      "--pro-consult-chrome-profile",
+      "Default",
+      "--pro-consult-cookie-wait",
+      "10s"
+    ], { HOME: fixture.home });
+
+    await expect(readConfig(fixture.home)).resolves.toMatchObject({
+      proConsult: {
+        enabled: true,
+        oraclePath: "/usr/local/bin/oracle",
+        chromeProfile: "Default",
+        cookieWait: "10s"
+      }
+    });
+    expect(result.stdout).toContain("Pro consult: enabled via ChatGPT browser subscription mode");
   });
 
   it("rejects a missing projects root", async () => {
@@ -44,7 +126,7 @@ describe("planbridge setup", () => {
         "--allowlist",
         "alpha",
         "--tunnel-id",
-        "tnl_123"
+        "tunnel_0123456789abcdef0123456789abcdef"
       ], { HOME: fixture.home })
     ).rejects.toThrow("projects root does not exist");
   });
@@ -59,7 +141,7 @@ describe("planbridge setup", () => {
       "--allowlist",
       "alpha",
       "--tunnel-id",
-      "tnl_123"
+      "tunnel_0123456789abcdef0123456789abcdef"
     ], { HOME: fixture.home });
     await expect(readConfig(fixture.home)).resolves.toMatchObject({ port: 7676 });
 
@@ -73,7 +155,7 @@ describe("planbridge setup", () => {
       "--port",
       "8888",
       "--tunnel-id",
-      "tnl_123"
+      "tunnel_0123456789abcdef0123456789abcdef"
     ], { HOME: other.home });
     await expect(readConfig(other.home)).resolves.toMatchObject({ port: 8888 });
   });
@@ -187,7 +269,7 @@ describe("planbridge setup", () => {
         "--allowlist",
         "alpha,gamma",
         "--tunnel-id",
-        "tnl_123"
+        "tunnel_0123456789abcdef0123456789abcdef"
       ], { HOME: fixture.home })
     ).rejects.toThrow("allowlisted project does not exist");
   });
@@ -203,8 +285,30 @@ describe("planbridge setup", () => {
         "--allowlist",
         "../outside",
         "--tunnel-id",
-        "tnl_123"
+        "tunnel_0123456789abcdef0123456789abcdef"
       ], { HOME: fixture.home })
     ).rejects.toThrow("allowlist entries must be project directory names");
+  });
+
+  it("serve starts the configured local MCP server through the CLI surface", async () => {
+    const fixture = await createFixtureProject("alpha");
+    await runSetup([
+      "setup",
+      "--projects-root",
+      fixture.projectsRoot,
+      "--allowlist",
+      "alpha",
+      "--port",
+      "0",
+      "--localhost"
+    ], { HOME: fixture.home });
+
+    const result = await runServe([], { HOME: fixture.home });
+    try {
+      expect(result.stdout).toBe(`PlanBridge MCP server listening on ${result.server.url}/mcp\n`);
+      expect(result.server.host).toBe("127.0.0.1");
+    } finally {
+      await result.server.close();
+    }
   });
 });

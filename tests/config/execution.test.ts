@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, effectiveExecution } from "../../src/config.js";
+import { ConfigSchema, effectiveExecution, effectiveProConsult } from "../../src/config.js";
 import { DEFAULT_LIMITS } from "../../src/limits.js";
 import { codexHandoffInputSchema } from "../../src/tools/codex-handoff.js";
 
@@ -54,5 +54,32 @@ describe("execution config", () => {
       adapter: "codex-cli"
     });
     expect(input).not.toHaveProperty("adapter");
+  });
+
+  it("keeps browser Pro consult disabled unless operator config opts in", () => {
+    expect(effectiveProConsult(ConfigSchema.parse(baseConfig))).toEqual({
+      enabled: false,
+      oraclePath: "oracle",
+      chromeProfile: "Default",
+      cookieWait: "10s"
+    });
+    expect(
+      effectiveProConsult(
+        ConfigSchema.parse({
+          ...baseConfig,
+          proConsult: {
+            enabled: true,
+            oraclePath: "/custom/oracle",
+            chromeProfile: "Profile 3",
+            cookieWait: "15s"
+          }
+        })
+      )
+    ).toEqual({
+      enabled: true,
+      oraclePath: "/custom/oracle",
+      chromeProfile: "Profile 3",
+      cookieWait: "15s"
+    });
   });
 });

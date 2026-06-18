@@ -2,112 +2,198 @@
 
 [![Verify](https://github.com/jbelnick/planbridge/actions/workflows/verify.yml/badge.svg)](https://github.com/jbelnick/planbridge/actions/workflows/verify.yml)
 
-**A local [Model Context Protocol](https://modelcontextprotocol.io) (MCP) connector that lets ChatGPT plan over an allowlisted local dev workspace — then hand the approved plan to Codex to build.**
+PlanBridge is a local [Model Context Protocol](https://modelcontextprotocol.io)
+(MCP) connector that lets ChatGPT plan over an allowlisted development
+workspace, then hand an explicitly approved plan to Codex for isolated
+implementation.
 
-PlanBridge gives a hosted planner (ChatGPT / GPT‑class models) a *narrow, read‑only, inspectable* window into your real codebase so it can produce a high‑quality plan, then packages that plan into a frozen handoff and drives an isolated Codex execution. The connector is read‑only by default, fails closed without access control, and prefers subscription‑mode execution over API‑billed calls.
+It is designed as a practical agent-control system: narrow local context,
+bounded/redacted tool responses, stable plan hashes, explicit human approval,
+Codex execution in a git worktree, and a review loop that returns status plus a
+secret-redacted diff.
 
-> Status: **feature‑complete** (M1–M5). TypeScript/Node, the official MCP SDK, Streamable HTTP. **135 automated tests, all offline** — no live model or tunnel required to run the suite.
+## What It Shows
 
----
+- A production-shaped MCP server with profile-based tool surfaces for ChatGPT.
+- Local workspace exposure that is allowlisted, bounded, audited, and
+  fail-closed.
+- A guided workflow facade over lower-level primitives:
+  `prepare_plan -> execute_plan -> review_run`.
+- Subscription-first Codex execution in isolated worktrees, with no auto-merge.
+- Optional GPT-5.5 Pro browser-subscription consultation through Oracle, kept
+  opt-in because it uses browser state and subscription quota.
+- Offline verification: typecheck, build, fixture smoke, and 173 automated
+  tests covering tool I/O, redaction, access control, hardening, execution, and
+  guided workflows.
 
-## Why
+## Normal ChatGPT Flow
 
-Complex coding tasks fail when the planner never saw the relevant files, constraints, tests, or local conventions — and a weak handoff to an execution agent wastes time and creates review churn. PlanBridge closes that gap without handing a hosted model the keys to your machine:
+Start PlanBridge locally and connect it in a ChatGPT Developer Mode
+conversation. Then use this flow:
 
-- **Plan with real context.** ChatGPT inspects an *allowlisted* set of projects through bounded, redacting tools and assembles a reproducible context bundle.
-- **Hand off deliberately.** The plan becomes a schema‑validated handoff whose exact bytes you approve before anything runs.
-- **Execute in isolation.** Codex runs the approved handoff in a dedicated git worktree on a throwaway branch — never your live tree, never auto‑merged.
-- **Review the result.** A bounded, secret‑redacted diff comes back for review, and you can request a follow‑up handoff.
-
-## How it works
-
+```text
+Use PlanBridge to prepare a Pro-backed plan for my-api.
+Objective: simplify the authentication middleware and add focused tests.
+Do not execute yet.
 ```
-ChatGPT (planner)                          your machine                     Codex (engineer)
-      │                                                                            
-      │  projects_list / project_summary / repo_search / repo_read_files            
-      ├──────────────────────────────►  read‑only, allowlisted, redacting           
-      │  context_pack (reproducible bundle) + git_status                            
-      │                                                                            
-      │  codex_handoff  ── you approve the exact bytes ──►  isolated git worktree ──► codex exec
-      │  codex_status  ◄── running / completed / failed ──                          
-      │  git_diff      ◄── bounded, secret‑redacted diff ──                         
-      │                                                                            
-      └──────────────────────────────►  request a follow‑up handoff …               
+
+PlanBridge returns a stored `plan_id`, `plan_hash`, proposed Codex handoff, and
+the exact next call shape. After reviewing the plan:
+
+```text
+Approved. Execute that plan.
 ```
 
-The MCP server binds to `127.0.0.1` and is reached only through a connection you configure (a Secure MCP Tunnel by default, or localhost for same‑machine testing).
+After Codex finishes:
 
-## Tool surface
+```text
+Review the run and show me the diff.
+```
 
-Nine MCP tools — eight read‑only, plus one explicit action. ChatGPT can never write to your tree except through the approved `codex_handoff`, and even that writes only inside an isolated worktree.
+The user should not need to know the low-level choreography (`context_pack`,
+`pro_consult`, `codex_handoff`, `codex_status`, `git_diff`) for normal use.
 
-| Tool | Mode | Purpose |
+## How It Works
+
+```text
+ChatGPT                     PlanBridge on your machine                 Codex
+   |                                   |                                  |
+   | prepare_plan                      |                                  |
+   |---------------------------------->| bounded context + optional Pro    |
+   |<----------------------------------| plan_id + sha256 plan_hash        |
+   |                                   |                                  |
+   | execute_plan after approval       |                                  |
+   |---------------------------------->| hash/stale/duplicate gates         |
+   |                                   | codex exec in isolated worktree -->|
+   |                                   |                                  |
+   | review_run                        |                                  |
+   |---------------------------------->| codex_status + redacted git_diff   |
+   |<----------------------------------| status, changed files, bounded diff|
+```
+
+The MCP server binds to `127.0.0.1`. Remote ChatGPT access requires a configured
+Secure MCP Tunnel or an operator-managed HTTPS tunnel with access control.
+
+## Tool Profiles
+
+| Profile | Purpose | Tools |
 |---|---|---|
-| `projects_list` | read‑only | List allowlisted projects and basic metadata. |
-| `project_summary` | read‑only | Repo type, key docs, test commands, recent status. |
-| `repo_search` | read‑only | Bounded ripgrep‑style search over allowed files. |
-| `repo_read_files` | read‑only | Read allowed files with size limits + secret filtering. |
-| `context_pack` | read‑only | Package files + prompt + constraints into a **reproducible** planning bundle (pinned to a commit, per‑file `sha256`). |
-| `git_status` | read‑only | Branch and dirty‑state summary. |
-| `git_diff` | read‑only | Bounded, secret‑redacted diff of a Codex run's worktree. |
-| `codex_status` | read‑only | Report a handoff's `running` / `completed` / `failed` state. |
-| `codex_handoff` | **action** | Start an isolated, subscription‑mode Codex execution from the approved plan. |
+| `guided` | Default for new setup. Best ChatGPT UX. | `projects_list`, `prepare_plan`, `execute_plan`, `review_run` |
+| `advanced` | Guided workflow plus debugging and direct primitives. | Guided tools plus `project_summary`, `repo_search`, `repo_read_files`, `context_pack`, `git_status`, `pro_consult` when enabled, `codex_handoff`, `codex_status`, `git_diff` |
+| `legacy` | Existing installed configs with no `tools.profile`. | Original flat tool surface, plus optional `pro_consult` |
 
-## Security model
+`prepare_plan` writes a private plan artifact under the operator's PlanBridge
+home and returns a stable hash. `execute_plan` refuses to run unless the approved
+hash matches the stored plan, the repo base has not drifted, the plan has not
+already been executed, and explicit approval text is present.
 
-PlanBridge treats exposing local context to a hosted model as a real risk and keeps the boundary narrow and auditable:
+## Quick Start
 
-- **Project‑root allowlist.** No default access to `$HOME` or the wider filesystem; the connector's own config dir is itself on the deny path.
-- **Layered secret protection.** Deny `.git/` by default, a path denylist (`.env`, keys, tokens, SSH/keychain material), `.gitignore` exclusion, and a content‑scan redaction pass over every returned byte (high‑entropy strings and known credential prefixes).
-- **Bounded everything.** Per‑file, per‑call, and per‑session size/budget caps; structured error codes (never silent truncation).
-- **Fail‑closed transport.** The public path refuses to start without configured access control; a continuous self‑probe hard‑alerts (and refuses to serve) if the public endpoint is ever reachable unauthenticated.
-- **Network‑secret runtime.** 256‑bit CSPRNG bearer secret, stored only as a sha256 hash, constant‑time compared; `Authorization` is redacted from logs; rate‑limit + lockout on auth failures.
-- **Subscription‑first execution.** The Codex adapter refuses API‑key mode by default and runs every handoff in a worktree‑isolated, never‑auto‑merged branch.
-- **Metadata‑only audit log** with size/age rotation. Secrets and file contents are never written.
+Prerequisites:
 
-The operator hardening guide is in [`docs/hardening.md`](docs/hardening.md); the full product + threat model spec is in [`docs/PLANBRIDGE-SPEC.md`](docs/PLANBRIDGE-SPEC.md).
-
-## Quickstart
-
-Requires Node ≥ 22.
+- Node.js 22 or newer.
+- `ripgrep` (`rg`) available on `PATH`.
+- Codex subscription login if using the `codex-cli` execution adapter.
+- Optional: Oracle + a logged-in Chrome profile for GPT-5.5 Pro browser
+  consultation.
 
 ```bash
-npm install
+npm ci
 npm run build
-npm test          # 135 offline tests
+npm test
+```
 
-# Configure a localhost connector over two allowlisted projects.
-# Writes ~/.planbridge/config.json (outside any project tree).
+Create a local config with the guided tool profile:
+
+```bash
 node dist/src/cli.js setup \
   --projects-root ~/code \
   --allowlist my-api,my-web \
-  --localhost \
-  --port 7676
-
-# Start the MCP server (binds 127.0.0.1)
-node dist/src/server.js
+  --localhost
 ```
 
-For remote use, configure a Secure MCP Tunnel (`--tunnel-id <id>`) or, as a fallback, a public HTTPS URL with network access control (`--public-base-url <https url> --access-control network`). See [`docs/hardening.md`](docs/hardening.md).
+Enable Codex execution in isolated worktrees:
 
-## How it was built
+```bash
+node dist/src/cli.js setup \
+  --projects-root ~/code \
+  --allowlist my-api \
+  --tunnel-id <secure-mcp-tunnel-id> \
+  --execution-adapter codex-cli
+```
 
-PlanBridge was built with a deliberate **two‑agent loop — an architect that plans and an engineer that builds — with adversarial review at every gate**:
+Expose the advanced/debug tool surface only when you want direct access to the
+low-level tools:
 
-1. **Architect (design).** Each milestone began as a written contract: a design fanned out to several independent design agents, a judge synthesized the strongest one, and an adversarial panel pressure‑tested it. The output was a frozen, file‑by‑file handoff plus a set of **independently testable acceptance criteria**.
-2. **Engineer (build).** A separate build agent implemented strictly against the frozen acceptance criteria in an isolated git worktree — graded only against that contract.
-3. **Adversarial acceptance review.** Before anything merged, a multi‑auditor review re‑ran the gate and tried to break the result — verifying citations, re‑attacking the security surface, and hunting for vacuous tests. Real findings (e.g. a symlink‑exfiltration hole in the diff tool, a redaction ordering bug, a flaky crypto test) were fixed before integration.
-4. **Fast‑forward integration.** Each verified slice was clean‑room rebuilt and fast‑forward merged, one milestone at a time.
+```bash
+node dist/src/cli.js setup \
+  --projects-root ~/code \
+  --allowlist my-api \
+  --localhost \
+  --advanced-tools
+```
 
-The result is five milestones (read‑only tools → context packer → Codex handoff → diff review → hardening) shipped behind frozen contracts, with the security‑sensitive paths (worktree‑isolated execution, secret redaction, fail‑closed transport) reviewed adversarially rather than trusted.
+Run the connector and inspect readiness:
 
-## Tech stack
+```bash
+npm run serve
+npm run doctor
+```
 
-TypeScript · Node ≥ 22 · official MCP SDK (Streamable HTTP) · Express · Zod (all tool I/O + config schemas) · Vitest · ripgrep (runtime dependency for search).
+`npm run doctor` prints connector checks and a copy-paste ChatGPT prompt for the
+guided workflow.
 
-## Status & scope
+## Security Model
 
-This is a working connector and a design study, not a hosted service. It assumes a single trusted operator on one machine and makes its residual risks explicit (see the spec's threat model and `docs/hardening.md`). It does **not** guarantee that no sensitive data reaches a hosted model — redaction is best‑effort and allowlisted content is, by design, visible to the planner.
+PlanBridge treats local workspace exposure as a real trust boundary.
+
+- Project-root allowlist. No default access to `$HOME` or arbitrary filesystem
+  paths.
+- Deny paths for `.git`, `.env`, SSH keys, PEM files, token files, and other
+  common secret surfaces.
+- `.gitignore` exclusion plus content redaction for credential prefixes and
+  high-entropy strings.
+- Size limits for files, search results, context bundles, diffs, and sessions.
+- Fail-closed public transport: public URLs require access control, and the
+  self-probe hard-alerts if a public endpoint is reachable unauthenticated.
+- Metadata-only audit logs with retention/rotation.
+- Codex execution refuses API-key mode for the subscription-first adapter.
+- Codex work lands in an isolated worktree and is never auto-merged.
+
+The Pro consult bridge is intentionally opt-in because it uses browser state and
+subscription quota.
+
+## Examples
+
+- [examples/config.localhost.example.json](examples/config.localhost.example.json)
+- [examples/context-pack.example.json](examples/context-pack.example.json)
+- [examples/handoff.example.md](examples/handoff.example.md)
+
+These examples are redacted/static and do not require ChatGPT, a tunnel, Oracle,
+or a live Codex run.
+
+## Status And Evidence
+
+Implemented milestones:
+
+- M1: read-only MCP server and core project/repo tools.
+- M2: reproducible context packs and git status.
+- M3: approved Codex handoff plus `handoff-file` and `codex-cli` adapters.
+- M4: status and bounded, redacted diff review for Codex worktrees.
+- M5: hardening, network-secret runtime, self-probe, audit retention, and threat
+  matrix tests.
+- Guided workflow: `prepare_plan`, `execute_plan`, `review_run`, persistent plan
+  store, plan hashes, stale-plan refusal, duplicate-execution refusal, and tool
+  profiles.
+
+Verification:
+
+```bash
+npm run typecheck
+npm test
+npm run smoke:fixtures
+npm run build
+```
 
 ## License
 

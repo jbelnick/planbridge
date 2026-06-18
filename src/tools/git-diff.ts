@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -75,6 +75,31 @@ async function git(worktreePath: string, args: string[], context: ToolContext): 
     });
     return stdout;
   } catch (error) {
+    if (isNotRepoError(error)) {
+      throw new PlanbridgeError("E_NOT_A_REPO", "git_diff requires a git worktree.");
+    }
+    throw new PlanbridgeError("E_WORKTREE_FAILED", GIT_DIFF_FAILURE);
+  }
+}
+
+async function gitPatch(
+  worktreePath: string,
+  args: string[],
+  context: ToolContext,
+  maxBuffer: number
+): Promise<{ stdout: string; truncated: boolean }> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", worktreePath, ...args], {
+      timeout: Math.max(1, context.limits.toolTimeoutMs - 1000),
+      maxBuffer,
+      env: { ...process.env, LC_ALL: "C", LANG: "C" }
+    });
+    return { stdout, truncated: false };
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException & { code?: string; stdout?: string; stderr?: string };
+    if (nodeError.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" && typeof nodeError.stdout === "string") {
+      return { stdout: nodeError.stdout, truncated: true };
+    }
     if (isNotRepoError(error)) {
       throw new PlanbridgeError("E_NOT_A_REPO", "git_diff requires a git worktree.");
     }
@@ -281,6 +306,7 @@ async function prepareUntrackedFile(input: {
   projectName: string;
   audit: AuditLogger;
   sessionId: string;
+  maxPatchBytes: number;
 }): Promise<PreparedDiffFile> {
   const blocked = classifyBlockedPath(input.relativePath);
   const absolutePath = path.resolve(input.worktreePath, input.relativePath);
@@ -335,7 +361,15 @@ async function prepareUntrackedFile(input: {
   }
 
   const fileStat = await stat(realPath);
-  const buffer = await readFile(realPath);
+  const bytesToRead = Math.min(fileStat.size, Math.max(input.maxPatchBytes, 8000));
+  const handle = await open(realPath, "r");
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.alloc(bytesToRead);
+    await handle.read(buffer, 0, bytesToRead, 0);
+  } finally {
+    await handle.close();
+  }
   if (containsBinaryNul(buffer)) {
     return {
       path: input.relativePath,
@@ -348,7 +382,7 @@ async function prepareUntrackedFile(input: {
     };
   }
 
-  const content = buffer.toString("utf8");
+  const content = buffer.subarray(0, Math.min(buffer.length, input.maxPatchBytes)).toString("utf8");
   const patch = synthesizeAddedPatch(input.relativePath, content);
   const redacted = await redactContent({
     content: patch,
@@ -365,7 +399,8 @@ async function prepareUntrackedFile(input: {
     additions: lineCount(content),
     deletions: 0,
     patch: redacted.content,
-    estimatedBytes: Buffer.byteLength(redacted.content, "utf8")
+    ...(fileStat.size > input.maxPatchBytes ? { patchTruncated: true as const } : {}),
+    estimatedBytes: fileStat.size > input.maxPatchBytes ? fileStat.size : Buffer.byteLength(redacted.content, "utf8")
   };
 }
 
@@ -412,9 +447,10 @@ async function patchTextForAllowedTrackedEntries(input: {
   baseSha: string;
   entries: NumstatEntry[];
   context: ToolContext;
-}): Promise<string> {
+  maxDiffBytes: number;
+}): Promise<{ stdout: string; truncated: boolean }> {
   const pathspecs = trackedPatchPathspecs(input.entries);
-  return git(
+  return gitPatch(
     input.worktreePath,
     [
       "-c",
@@ -427,7 +463,8 @@ async function patchTextForAllowedTrackedEntries(input: {
       "--",
       ...(pathspecs.length > 0 ? pathspecs : [".git/PLANBRIDGE_NO_ALLOWED_TRACKED_DIFFS"])
     ],
-    input.context
+    input.context,
+    input.maxDiffBytes + 131_072
   );
 }
 
@@ -502,11 +539,12 @@ async function collectRunDiff(input: {
     worktreePath: target.worktreePath,
     baseSha: target.baseSha,
     entries: allowedTrackedEntries,
-    context: input.context
+    context: input.context,
+    maxDiffBytes: input.maxDiffBytes
   });
   const untracked = await git(target.worktreePath, ["ls-files", "--others", "--exclude-standard", "-z"], input.context);
 
-  const patchBlocks = splitPatchBlocks(patchText);
+  const patchBlocks = splitPatchBlocks(patchText.stdout);
   const trackedFiles: PreparedDiffFile[] = [];
   let allowedPatchIndex = 0;
   for (const plan of trackedPlans) {
@@ -525,15 +563,17 @@ async function collectRunDiff(input: {
       );
       continue;
     }
-    trackedFiles.push(
-      await prepareTrackedFile({
-        entry: plan.entry,
-        patch: patchBlocks[allowedPatchIndex] ?? "",
-        projectName: project.name,
-        audit: input.context.audit,
-        sessionId: input.context.session.id
-      })
-    );
+    const prepared = await prepareTrackedFile({
+      entry: plan.entry,
+      patch: patchBlocks[allowedPatchIndex] ?? "",
+      projectName: project.name,
+      audit: input.context.audit,
+      sessionId: input.context.session.id
+    });
+    if (patchText.truncated && allowedPatchIndex >= patchBlocks.length - 1) {
+      prepared.patchTruncated = true;
+    }
+    trackedFiles.push(prepared);
     allowedPatchIndex += 1;
   }
   const untrackedFiles: PreparedDiffFile[] = [];
@@ -544,7 +584,8 @@ async function collectRunDiff(input: {
         relativePath,
         projectName: project.name,
         audit: input.context.audit,
-        sessionId: input.context.session.id
+        sessionId: input.context.session.id,
+        maxPatchBytes: input.maxDiffBytes
       })
     );
   }
@@ -565,7 +606,7 @@ async function collectRunDiff(input: {
     branch: target.branch,
     committed: head !== target.baseSha,
     files: budgeted.files,
-    truncated: budgeted.truncated,
+    truncated: budgeted.truncated || patchText.truncated,
     total_estimate: budgeted.totalEstimate
   };
 }

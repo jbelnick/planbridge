@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import path from "node:path";
+import type { RunningPlanbridgeServer } from "./server.js";
 import {
   assertDirectoryExists,
   writeConfig,
   type PlanbridgeConfig
 } from "./config.js";
+import { runDoctor } from "./doctor.js";
 import { generateAccessSecret, hashAccessSecret } from "./security/access-secret.js";
 
 const OAUTH_RUNTIME_NOT_IMPLEMENTED =
@@ -15,6 +17,11 @@ export type SetupResult = {
   configPath: string;
 };
 
+export type ServeResult = {
+  stdout: string;
+  server: RunningPlanbridgeServer;
+};
+
 type SetupArgs = {
   projectsRoot?: string;
   allowlist?: string[];
@@ -23,6 +30,15 @@ type SetupArgs = {
   publicBaseUrl?: string;
   localhost: boolean;
   accessControl?: "network" | "oauth";
+  executionAdapter?: "handoff-file" | "codex-cli";
+  worktreeRoot?: string;
+  codexTimeoutMs?: number;
+  branchPrefix?: string;
+  enableProConsult: boolean;
+  proConsultOraclePath?: string;
+  proConsultChromeProfile?: string;
+  proConsultCookieWait?: string;
+  advancedTools: boolean;
 };
 
 function readOption(argv: string[], option: string): string | undefined {
@@ -41,22 +57,40 @@ function hasFlag(argv: string[], flag: string): boolean {
   return argv.includes(flag);
 }
 
+function parsePositiveInt(value: string, label: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`invalid ${label}: ${value}`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeInt(value: string, label: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`invalid ${label}: ${value}`);
+  }
+  return parsed;
+}
+
 function parseSetupArgs(argv: string[]): SetupArgs {
   if (argv[0] !== "setup") {
     throw new Error("expected command: setup");
   }
 
   const portText = readOption(argv, "--port") ?? "7676";
-  const port = Number.parseInt(portText, 10);
-  if (!Number.isInteger(port) || port <= 0) {
-    throw new Error(`invalid port: ${portText}`);
-  }
+  const port = parseNonNegativeInt(portText, "port");
 
   const allowlistText = readOption(argv, "--allowlist");
   const accessControl = readOption(argv, "--access-control");
   if (accessControl !== undefined && accessControl !== "network" && accessControl !== "oauth") {
     throw new Error(`unsupported access control: ${accessControl}`);
   }
+  const executionAdapter = readOption(argv, "--execution-adapter");
+  if (executionAdapter !== undefined && executionAdapter !== "handoff-file" && executionAdapter !== "codex-cli") {
+    throw new Error(`unsupported execution adapter: ${executionAdapter}`);
+  }
+  const codexTimeoutText = readOption(argv, "--codex-timeout-ms");
 
   return {
     projectsRoot: readOption(argv, "--projects-root"),
@@ -68,7 +102,16 @@ function parseSetupArgs(argv: string[]): SetupArgs {
     tunnelId: readOption(argv, "--tunnel-id"),
     publicBaseUrl: readOption(argv, "--public-base-url"),
     localhost: hasFlag(argv, "--localhost"),
-    accessControl
+    accessControl,
+    executionAdapter,
+    worktreeRoot: readOption(argv, "--worktree-root"),
+    codexTimeoutMs: codexTimeoutText ? parsePositiveInt(codexTimeoutText, "codex timeout") : undefined,
+    branchPrefix: readOption(argv, "--branch-prefix"),
+    enableProConsult: hasFlag(argv, "--enable-pro-consult"),
+    proConsultOraclePath: readOption(argv, "--pro-consult-oracle-path"),
+    proConsultChromeProfile: readOption(argv, "--pro-consult-chrome-profile"),
+    proConsultCookieWait: readOption(argv, "--pro-consult-cookie-wait"),
+    advancedTools: hasFlag(argv, "--advanced-tools")
   };
 }
 
@@ -140,6 +183,23 @@ export async function runSetup(
     accessSecret = generateAccessSecret();
     stdout += `Access secret: ${accessSecret}\nInstall this bearer secret at the tunnel boundary; PlanBridge stores only its hash.\n`;
   }
+  const execution = {
+    adapter: args.executionAdapter ?? "handoff-file",
+    ...(args.worktreeRoot ? { worktreeRoot: args.worktreeRoot } : {}),
+    ...(args.codexTimeoutMs ? { timeoutMs: args.codexTimeoutMs } : {}),
+    ...(args.branchPrefix ? { branchPrefix: args.branchPrefix } : {})
+  } satisfies NonNullable<PlanbridgeConfig["execution"]>;
+  stdout += `Execution adapter: ${execution.adapter}\n`;
+  if (execution.adapter === "codex-cli") {
+    stdout += "Codex execution runs in an isolated worktree and refuses API-key mode.\n";
+  }
+  const tools = { profile: args.advancedTools ? "advanced" : "guided" } satisfies NonNullable<PlanbridgeConfig["tools"]>;
+  stdout += `Tool profile: ${tools.profile}\n`;
+  if (args.enableProConsult) {
+    stdout += `Pro consult: enabled via ChatGPT browser subscription mode (${args.proConsultChromeProfile ?? "Default"} Chrome profile).\n`;
+  } else {
+    stdout += "Pro consult: disabled.\n";
+  }
 
   const config: PlanbridgeConfig = {
     schemaVersion: "1.0",
@@ -153,7 +213,19 @@ export async function runSetup(
         ? { mode: "oauth" }
         : args.accessControl === "network"
           ? { mode: "none", accessControl: { kind: "network", configured: true, secretHash: hashAccessSecret(accessSecret ?? "") } }
-          : { mode: "none" }
+          : { mode: "none" },
+    execution,
+    tools,
+    ...(args.enableProConsult
+      ? {
+          proConsult: {
+            enabled: true,
+            ...(args.proConsultOraclePath ? { oraclePath: args.proConsultOraclePath } : {}),
+            ...(args.proConsultChromeProfile ? { chromeProfile: args.proConsultChromeProfile } : {}),
+            ...(args.proConsultCookieWait ? { cookieWait: args.proConsultCookieWait } : {})
+          }
+        }
+      : {})
   };
 
   return {
@@ -162,9 +234,51 @@ export async function runSetup(
   };
 }
 
+export async function runServe(argv: string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<ServeResult> {
+  if (argv.length > 0) {
+    throw new Error("serve does not accept arguments");
+  }
+  const { startPlanbridgeServer } = await import("./server.js");
+  const server = await startPlanbridgeServer(env.HOME ? { home: env.HOME } : {});
+  return {
+    stdout: `PlanBridge MCP server listening on ${server.url}/mcp\n`,
+    server
+  };
+}
+
+function usage(): string {
+  return `Usage:
+  planbridge setup --projects-root <path> --allowlist <name[,name...]> (--tunnel-id <id> | --public-base-url <https-url> --access-control network | --localhost) [--execution-adapter handoff-file|codex-cli] [--enable-pro-consult] [--advanced-tools]
+  planbridge serve
+  planbridge doctor
+`;
+}
+
 async function main(): Promise<void> {
-  const result = await runSetup(process.argv.slice(2));
-  process.stdout.write(result.stdout);
+  const [command, ...args] = process.argv.slice(2);
+  if (command === "--help" || command === "-h") {
+    process.stdout.write(usage());
+    return;
+  }
+  if (command === "setup") {
+    const result = await runSetup([command, ...args]);
+    process.stdout.write(result.stdout);
+    return;
+  }
+  if (command === "serve" || command === "start") {
+    const result = await runServe(args);
+    process.stdout.write(result.stdout);
+    return;
+  }
+  if (command === "doctor") {
+    const result = await runDoctor(args);
+    process.stdout.write(result.stdout);
+    if (!result.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+  throw new Error(command ? `unknown command: ${command}\n${usage()}` : usage());
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -437,6 +437,37 @@ describe("git_diff", () => {
     expect(raisedReturnedPatchBytes).toBeLessThanOrEqual(160);
   });
 
+  it("bounds large untracked file reads before synthesizing patches", async () => {
+    const fixture = await createFixtureProject("alpha");
+    const target = await createRunTarget(fixture);
+    const content = `${Array.from({ length: 10_000 }, (_, index) => `line-${index}`).join("\n")}\n`;
+    await writeFile(path.join(target.worktreePath, "huge-untracked.txt"), content);
+
+    const diff = expectDiff(await gitDiffTool({ runHandle: target.handle, maxDiffBytes: 1024 }, makeContext(fixture)));
+    const file = diff.files.find((entry) => entry.path === "huge-untracked.txt");
+
+    expect(diff.truncated).toBe(true);
+    expect(file).toMatchObject({ kind: "added", untracked: true, patchTruncated: true });
+    expect(file?.patch).toContain("line-0");
+    expect(file?.patch).not.toContain("line-9999");
+    expect(Buffer.byteLength(file?.patch ?? "", "utf8")).toBeLessThanOrEqual(1024);
+  });
+
+  it("returns a truncated result instead of failing when tracked patch output exceeds the child buffer", async () => {
+    const fixture = await createFixtureProject("alpha");
+    const target = await createRunTarget(fixture);
+    const content = `${Array.from({ length: 30_000 }, (_, index) => `tracked-${index}`).join("\n")}\n`;
+    await writeFile(path.join(target.worktreePath, "src.txt"), content);
+
+    const diff = expectDiff(await gitDiffTool({ runHandle: target.handle, maxDiffBytes: 1024 }, makeContext(fixture)));
+    const file = diff.files.find((entry) => entry.path === "src.txt");
+
+    expect(diff.truncated).toBe(true);
+    expect(file).toMatchObject({ kind: "modified", untracked: false, patchTruncated: true });
+    expect(file?.patch).toContain("diff --git");
+    expect(JSON.stringify(diff)).not.toContain("E_WORKTREE_FAILED");
+  });
+
   it("maps closed error cases without adding error codes or leaking raw git stderr", async () => {
     const fixture = await createFixtureProject("alpha");
     const context = makeContext(fixture);

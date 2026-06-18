@@ -10,6 +10,8 @@ export type ProbeResponse = {
 
 export type ProbeRequest = (url: string) => Promise<ProbeResponse>;
 
+export const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+
 export type SelfProbe = {
   start(): void;
   stop(): void;
@@ -23,6 +25,7 @@ export type SelfProbeInput = {
   audit: AuditLogger;
   intervalMs?: number;
   consecutiveBreaches?: number;
+  timeoutMs?: number;
   probeRequest?: ProbeRequest;
   onHardAlert?: () => void | Promise<void>;
   close?: () => void | Promise<void>;
@@ -55,28 +58,35 @@ export function classifyProbe(response: ProbeResponse): ProbeStatus {
   return typeof body.result.protocolVersion === "string" && "serverInfo" in body.result ? "breach" : "healthy";
 }
 
-async function defaultProbeRequest(url: string): Promise<ProbeResponse> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "planbridge-self-probe", version: "1.0.0" }
-      }
-    })
-  });
-  return { status: response.status, body: await response.text() };
+export async function defaultProbeRequest(url: string, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS): Promise<ProbeResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "planbridge-self-probe", version: "1.0.0" }
+        }
+      })
+    });
+    return { status: response.status, body: await response.text() };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function createSelfProbe(input: SelfProbeInput): SelfProbe {
   const intervalMs = input.intervalMs ?? 60_000;
   const breachThreshold = input.consecutiveBreaches ?? 2;
-  const probeRequest = input.probeRequest ?? defaultProbeRequest;
+  const probeRequest = input.probeRequest ?? ((url: string) => defaultProbeRequest(url, input.timeoutMs));
   const stderr = input.stderr ?? process.stderr;
   let consecutive = 0;
   let tripped = false;

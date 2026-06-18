@@ -125,8 +125,7 @@ describe("network auth middleware", () => {
           { windowMs: 60_000, maxFailures: 5, lockoutThreshold: 10, lockoutMs: 900_000, backoffBaseMs: 1_000 },
           () => now
         ),
-        audit: createAuditLogger(logPath),
-        now: () => now
+        audit: createAuditLogger(logPath)
       })
     );
     app.post("/mcp", (_req, res) => res.json({ ok: true }));

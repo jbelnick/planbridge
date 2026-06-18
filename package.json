@@ -1,7 +1,7 @@
 {
   "name": "planbridge",
   "version": "0.1.0",
-  "description": "A local Model Context Protocol (MCP) connector that lets ChatGPT plan over an allowlisted local dev workspace and hand the approved plan to Codex — read-only by default, fail-closed, and subscription-first.",
+  "description": "A local Model Context Protocol (MCP) connector that lets ChatGPT plan over an allowlisted local dev workspace and hand the approved plan to Codex.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -28,8 +28,31 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "doctor": "node dist/src/cli.js doctor",
+    "serve": "node dist/src/cli.js serve",
+    "service:install": "scripts/planbridge-service.sh install",
+    "service:logs": "scripts/planbridge-service.sh logs",
+    "service:restart": "scripts/planbridge-service.sh restart",
+    "service:start": "scripts/planbridge-service.sh start",
+    "service:status": "scripts/planbridge-service.sh status",
+    "service:stop": "scripts/planbridge-service.sh stop",
+    "service:uninstall": "scripts/planbridge-service.sh uninstall",
+    "start": "npm run serve",
     "test": "vitest run",
-    "smoke:fixtures": "vitest run tests/integration/fixture-smoke.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke:fixtures": "vitest run tests/integration/fixture-smoke.test.ts",
+    "tunnel:doctor": "scripts/tunnel-client-profile.sh doctor",
+    "tunnel:init": "scripts/tunnel-client-profile.sh init",
+    "tunnel:install": "scripts/install-tunnel-client.sh",
+    "tunnel:run": "scripts/tunnel-client-profile.sh run",
+    "tunnel:service:install": "scripts/planbridge-tunnel-service.sh install",
+    "tunnel:service:logs": "scripts/planbridge-tunnel-service.sh logs",
+    "tunnel:service:restart": "scripts/planbridge-tunnel-service.sh restart",
+    "tunnel:service:start": "scripts/planbridge-tunnel-service.sh start",
+    "tunnel:service:status": "scripts/planbridge-tunnel-service.sh status",
+    "tunnel:service:stop": "scripts/planbridge-tunnel-service.sh stop",
+    "tunnel:service:uninstall": "scripts/planbridge-tunnel-service.sh uninstall",
+    "tunnel:status": "scripts/tunnel-client-profile.sh status"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

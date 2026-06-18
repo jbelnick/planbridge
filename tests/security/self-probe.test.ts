@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAuditLogger } from "../../src/security/audit-log.js";
-import { classifyProbe, createSelfProbe } from "../../src/security/self-probe.js";
+import { classifyProbe, createSelfProbe, defaultProbeRequest } from "../../src/security/self-probe.js";
 
 const servers: Server[] = [];
 
@@ -45,6 +45,29 @@ describe("self-probe classification", () => {
     expect(classifyProbe({ status: 200, body: "<html>ok</html>" })).toBe("healthy");
     expect(classifyProbe({ status: 401, body: { error: "E_AUTH_FAILED" } })).toBe("healthy");
     expect(classifyProbe({ status: 200, body: { jsonrpc: "2.0", result: { protocolVersion: 123, serverInfo: {} } } })).toBe("healthy");
+  });
+
+  it("aborts the default probe request after the configured timeout", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const pending = expect(defaultProbeRequest("https://planbridge.example.test/mcp", 10)).rejects.toThrow("aborted");
+      await vi.advanceTimersByTimeAsync(10);
+      await pending;
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://planbridge.example.test/mcp",
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });
 

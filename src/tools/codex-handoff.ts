@@ -37,7 +37,7 @@ export type CodexHandoffToolOutput =
     }
   | ToolError;
 
-function parseHandoffInput(input: unknown): CodexHandoff {
+export function parseHandoffInput(input: unknown): CodexHandoff {
   const parsed = codexHandoffInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new PlanbridgeError("E_HANDOFF_INCOMPLETE", "codex_handoff is missing a required field or section.");
@@ -45,58 +45,66 @@ function parseHandoffInput(input: unknown): CodexHandoff {
   return parsed.data;
 }
 
-export async function codexHandoff(rawInput: unknown, context: ToolContext): Promise<CodexHandoffToolOutput> {
-  try {
-    const input = parseHandoffInput(rawInput);
-    const project = await resolveAllowedProject(context.config, input.project, planbridgeHome({ HOME: context.home }));
-    const execution = effectiveExecution(context.config);
+export async function startCodexHandoff(
+  input: CodexHandoff,
+  context: ToolContext,
+  auditTool = "codex_handoff"
+): Promise<Exclude<CodexHandoffToolOutput, ToolError>> {
+  const project = await resolveAllowedProject(context.config, input.project, planbridgeHome({ HOME: context.home }));
+  const execution = effectiveExecution(context.config);
 
-    if (execution.adapter === "codex-cli") {
-      const adapter = createCodexCliAdapter({
-        home: context.home,
-        config: context.config,
-        env: process.env,
-        timeoutMs: execution.timeoutMs,
-        ...(context.codexRunner ? { run: context.codexRunner } : {})
-      });
-      const { handle, artifactPath, worktreePath } = await adapter.start({ ...input, project: project.name });
-      const mode = adapter.mode();
-      const status = await adapter.status(handle);
-      await context.audit.append({
-        event: "exec",
-        tool: "codex_handoff",
-        project: project.name,
-        path: worktreePath,
-        runId: handle,
-        sessionId: context.session.id
-      });
-      return {
-        handle: artifactPath,
-        id: handle,
-        mode,
-        execution: {
-          adapter: "codex-cli",
-          runHandle: handle,
-          state: status.state
-        }
-      };
-    }
-
-    const adapter = createHandoffFileAdapter({ home: context.home, env: process.env });
-    const { handle } = await adapter.start({ ...input, project: project.name });
+  if (execution.adapter === "codex-cli") {
+    const adapter = createCodexCliAdapter({
+      home: context.home,
+      config: context.config,
+      env: process.env,
+      timeoutMs: execution.timeoutMs,
+      ...(context.codexRunner ? { run: context.codexRunner } : {})
+    });
+    const { handle, artifactPath, worktreePath } = await adapter.start({ ...input, project: project.name });
     const mode = adapter.mode();
+    const status = await adapter.status(handle);
     await context.audit.append({
-      event: "handoff",
-      tool: "codex_handoff",
+      event: "exec",
+      tool: auditTool,
       project: project.name,
-      path: handle,
+      path: worktreePath,
+      runId: handle,
       sessionId: context.session.id
     });
     return {
-      handle,
-      id: path.basename(handle, ".md"),
-      mode
+      handle: artifactPath,
+      id: handle,
+      mode,
+      execution: {
+        adapter: "codex-cli",
+        runHandle: handle,
+        state: status.state
+      }
     };
+  }
+
+  const adapter = createHandoffFileAdapter({ home: context.home, env: process.env });
+  const { handle } = await adapter.start({ ...input, project: project.name });
+  const mode = adapter.mode();
+  await context.audit.append({
+    event: "handoff",
+    tool: auditTool,
+    project: project.name,
+    path: handle,
+    sessionId: context.session.id
+  });
+  return {
+    handle,
+    id: path.basename(handle, ".md"),
+    mode
+  };
+}
+
+export async function codexHandoff(rawInput: unknown, context: ToolContext): Promise<CodexHandoffToolOutput> {
+  try {
+    const input = parseHandoffInput(rawInput);
+    return await startCodexHandoff(input, context);
   } catch (error) {
     return toToolError(error);
   }
